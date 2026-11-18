@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Return by Death — isekai loop RPG</title>
+<style>
+body{background:#0d1020;color:#e8e6df;font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,sans-serif;margin:0;padding:0}
+#app{max-width:760px;margin:0 auto;padding:14px}
+#hud{position:sticky;top:0;background:#141830;padding:8px 10px;border-radius:10px;font-size:13px;line-height:1.7}
+#main{background:#151a2e;border:1px solid #2a3355;border-radius:12px;padding:16px;margin-top:10px;min-height:280px}
+h1{font-size:34px;margin:8px 0;color:#ffd479}
+h2{margin:0 0 8px;color:#ffd479}
+h3{margin:14px 0 6px;color:#ffd479;font-size:15px}
+.story{line-height:1.7;font-size:15px}
+.sm{font-size:12px;opacity:.75}
+.bar{height:10px;background:#0a0d1a;border-radius:6px;margin:6px 0 10px;overflow:hidden}
+.bar i{display:block;height:100%;background:linear-gradient(90deg,#e05252,#f0a040);border-radius:6px}
+#choices{margin-top:12px;display:flex;flex-direction:column;gap:8px}
+button{background:#232a48;color:#e8e6df;border:1px solid #3a4470;border-radius:9px;padding:11px 13px;font-size:15px;cursor:pointer}
+button:hover{background:#2d3560}
+button:disabled{opacity:.35;cursor:not-allowed}
+#choices button,#nav button,#foot button{width:100%}
+#nav{display:flex;gap:8px;margin-top:10px}
+#nav button{flex:1;text-align:center}
+#foot{display:flex;gap:8px;margin-top:10px;font-size:12px}
+#foot button{padding:6px;font-size:12px}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px;margin-top:10px}
+.card{display:block;text-align:left}
+.card span{font-size:12px;opacity:.8}
+.card.on{border-color:#ffd479;background:#33301f}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:14px}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0}
+.row button{flex:1}
+input{width:100%;padding:11px;border-radius:9px;border:1px solid #3a4470;background:#0d1020;color:#e8e6df;font-size:15px;margin-top:8px;box-sizing:border-box}
+.log{border-top:1px dashed #3a4470;margin-top:10px;padding-top:8px;font-size:13px;line-height:1.6;min-height:70px}
+hr{border:0;border-top:1px solid #2a3355;margin:10px 0}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="hud">loading…</div>
+  <div id="main"></div>
+  <div id="choices"></div>
+  <div id="nav"></div>
+  <div id="foot">
+    <button data-act="save">💾 Save</button>
+    <button data-act="load">📂 Load</button>
+    <button data-act="how">❓</button>
+    <button data-act="wipe">🗑 Wipe</button>
+  </div>
+</div>
+<script>
+const $=s=>document.querySelector(s);
+const rnd=(a,b)=>Math.floor(Math.random()*(b-a+1))+a;
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+const SKILLS=[
+ {id:'chrono',name:'Chrono Insight',desc:'+3 AGI · see enemy intent · 15% dodge',b:{agi:3}},
+ {id:'appraise',name:'Appraise',desc:'+2 MAG · see enemy stats · +25% loot',b:{mag:2}},
+ {id:'aegis',name:'Divine Aegis',desc:'+3 DEF · heal 15% HP on level up',b:{def:3}},
+ {id:'burst',name:'Mana Burst',desc:'+3 MAG · +10 MP · heavy skill damage',b:{mag:3,mp:10}},
+ {id:'gluttony',name:'Gluttony',desc:'+15% XP from everything',b:{xp:0.15}},
+ {id:'sword',name:'Sword Saint',desc:'+3 ATK · free opening strike',b:{atk:3}},
+];
+const SKCOST={chrono:6,appraise:8,aegis:10,burst:12,gluttony:8,sword:10};
+
+const ENEMIES={
+ slime:{n:'Wild Slime',hp:26,atk:6,def:1,agi:4,xp:14,gold:8},
+ goblin:{n:'Forest Goblin',hp:34,atk:9,def:2,agi:6,xp:20,gold:14},
+ wolf:{n:'Star-wolf',hp:44,atk:12,def:2,agi:9,xp:26,gold:18},
+ bandit:{n:'Road Bandit',hp:52,atk:14,def:3,agi:7,xp:34,gold:30},
+ cultist:{n:'Thorn Cultist',hp:60,atk:16,def:4,agi:8,xp:42,gold:36},
+ shade:{n:'Loop Shade',hp:78,atk:20,def:5,agi:10,xp:55,gold:45},
+ goblinKing:{n:'Goblin King Grakk',hp:70,atk:12,def:2,agi:6,xp:60,gold:50,boss:1},
+ wraith:{n:'Wraith of Aldenfell',hp:105,atk:16,def:3,agi:7,xp:95,gold:75,boss:1},
+ witch:{n:'Witch of Thorns',hp:140,atk:20,def:5,agi:8,xp:140,gold:110,boss:1},
+ knight:{n:'Sir Vey, Noble Blade',hp:185,atk:25,def:6,agi:9,xp:190,gold:160,boss:1},
+ warden:{n:'The Warden of Loops',hp:260,atk:31,def:9,agi:11,xp:300,gold:260,boss:1},
+};
+
+const BUILDINGS=[
+ {id:'cot',name:'Cottage',cost:{gold:50,wood:10},b:{hp:25},desc:'+25 max HP'},
+ {id:'farm',name:'Farm',cost:{gold:80,wood:15},b:{gold:6},desc:'+6 gold per chapter'},
+ {id:'smith',name:'Smithy',cost:{gold:120,wood:20,stone:10},b:{atk:2},desc:'+2 ATK'},
+ {id:'wall',name:'Stone Wall',cost:{gold:100,stone:25},b:{def:2},desc:'+2 DEF'},
+ {id:'shr',name:'Shrine of Return',cost:{gold:150,wood:10,stone:15},b:{mp:8,od:1},desc:'+8 max MP, +1 OD per chapter'},
+];
+const PERKS=[
+ {id:'mul',name:"Fate's Favor",desc:'+5% to all stats',cost:2,max:8},
+ {id:'pot',name:'Prepared',desc:'+2 potions every chapter',cost:3,max:3},
+ {id:'sp',name:'Fast Learner',desc:'+1 stat point per level',cost:4,max:5},
+ {id:'od',name:"Death's Memory",desc:'+1 OD per Return by Death',cost:5,max:5},
+];
+
+let S=null,C=null;
+const KEY='isekai-loop-save-v1';
+function fresh(){return{screen:'title',name:'',skill:null,lv:1,xp:0,sp:0,hp:30,mp:10,
+ maxhp:30,maxmp:10,atk:5,def:3,agi:5,mag:4,xpm:1,gold:30,wood:0,stone:0,pot:1,od:0,
+ ch:1,node:0,pts:{hp:0,atk:0,def:0,agi:0,mag:0},build:{},perks:{mul:0,pot:0,sp:0,od:0},
+ deaths:0,ng:0,_scene:null,_note:null,_ch:null,_from:null};}
+
+function estateBonus(){const b={hp:0,mp:0,atk:0,def:0,agi:0,mag:0,gold:0,od:0};
+ for(const k in S.build){const d=BUILDINGS.find(x=>x.id===k);if(d)for(const key in d.b)b[key]=(b[key]||0)+d.b[key]*S.build[k];}return b;}
+function calc(){const p=S.pts,m=(1+S.perks.mul*0.05)*(1+S.ng*0.15);
+ const sk=(SKILLS.find(s=>s.id===S.skill)||{b:{}}).b,eb=estateBonus();
+ S.maxhp=Math.round((30+S.lv*10+p.hp*6+eb.hp)*m)+(sk.hp||0);
+ S.maxmp=Math.round((10+S.lv*3+p.mag*4+eb.mp)*m)+(sk.mp||0);
+ S.atk=Math.round((5+S.lv*2+p.atk*2+eb.atk)*m)+(sk.atk||0);
+ S.def=Math.round((3+S.lv*1.5+p.def*2+eb.def)*m)+(sk.def||0);
+ S.agi=Math.round((5+S.lv*1.5+p.agi*2+eb.agi)*m)+(sk.agi||0);
+ S.mag=Math.round((4+S.lv*2+p.mag*3+eb.mag)*m)+(sk.mag||0);
+ S.xpm=1+(sk.xp||0);S.hp=Math.min(S.hp,S.maxhp);S.mp=Math.min(S.mp,S.maxmp);}
+const xpNext=()=>Math.round(25*Math.pow(S.lv,1.35));
+function gainXp(n){n=Math.round(n*S.xpm);let u=0;S.xp+=n;
+ while(S.xp>=xpNext()){S.xp-=xpNext();S.lv++;S.sp+=3+S.perks.sp;u++;
+  if(S.skill==='aegis')S.hp=Math.min(S.maxhp,S.hp+Math.round(S.maxhp*0.15));}return u;}
+
+function save(){try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){}}
+function load(){try{const d=localStorage.getItem(KEY);if(!d)return false;
+ S=Object.assign(fresh(),JSON.parse(d));
+ if(['combat','scene','note','death'].includes(S.screen))S.screen='explore';
+ S._ch=null;render();return true;}catch(e){return false;}}
+
+function setChoices(o){$('#choices').innerHTML=o.map((x,i)=>`<button data-i="${i}">${x[0]}</button>`).join('');S._ch=o.map(x=>x[1]);}
+function scene(t,b,o){S.screen='scene';S._scene={t,b,o};render();}
+function note(t,b,o){S._from=S.screen;S.screen='note';S._note={t,b,o};render();}
+function warn(t,b){scene(t,b,[['OK',()=>{S.screen=S._from==='estate'?'estate':'explore';render();}]]);}
+
+const CHAPTERS=[
+{name:'Chapter I · The Forest of Beginning',boss:'goblinKing',
+ bossText:'Goblin King Grakk sits on a throne of stolen doors, laughing at your feet. “You keep coming back,” he sneers. “I keep collecting.”',
+ nodes:[
+  ()=>scene('Awakening','The last thing you remember is a shove on a train platform, then dark.<br><br>Now: moss, mist, and a sky with <b>two moons</b>. A silver-haired girl crouches over you with a lantern.',[
+   ['“Where am I?”',()=>scene('Lyra','“Aldenfell,” she says. “You came through the Gate, and something followed you back.” She presses a cold charm into your hand. “The dead do not stay dead here. Not for you.”',[['Take her hand',()=>{S.pot++;advance();}]]),
+   ['Stay silent, check your body',()=>scene('Something new','Your heart beats twice where it should. Under your ribs there is a word you cannot say aloud: <b>Return</b>.',[['Stand up',()=>{S.od++;advance();}]])]]),
+  ()=>fightNode('slime','A slime the size of a barrel blocks the road, quivering with patience and hunger.'),
+  ()=>scene('The Crossroads','Two hands wait at the crossroads: a merchant with a stuck cart, a farmer with a fallen fence. You have time for one.',[
+   ['Help the merchant',()=>{S.gold+=25;scene('Coin','The merchant presses silver on you and whispers that someone has been asking about “the one who returns.”',[['On your way',advance]]);}],
+   ['Fix the fence',()=>{S.wood+=15;scene('Timber','The farmer pays in wood and a warning: the Witch of Thorns collects debts, not coins.',[['On your way',advance]]);}]]),
+  ()=>fightNode('goblin','A goblin drops from the branches, knife first, grinning like it has done this before.')
+ ]},
+{name:'Chapter II · The Ruined Estate',boss:'wraith',
+ bossText:'The wraith wears the face of Aldenfell’s last lord, and speaks with your voice: “You always come back to the same room.”',
+ nodes:[
+  ()=>scene('A Roof of Your Own','Lyra signs a deed in the name of a stranger: the Aldenfell estate, three walls and a promise. “Rebuild it,” she says, “and the village will remember that you chose it.”',[
+   ['Search the cellar',()=>fight('bandit',advance)],
+   ['Meet the villagers',()=>{S.gold+=20;S.wood+=10;scene('Neighbours','Bread, suspicion, and a bundle of straw for the loft. Someone leaves a charm on your door while you are out.',[['Next',advance]]);}]]),
+  ()=>lootNode('In the collapsed barn you pry loose good beams and find a stonemason’s crate, still sealed.',{wood:15,stone:10},'The Barn'),
+  ()=>fightNode('wolf','A star-wolf steps out of the treeline, fur lit with cold blue light. It does not run.'),
+  ()=>fightNode('bandit','The road is taxed by men who have clearly died before and intend to again.')
+ ]},
+{name:'Chapter III · The Witch of Thorns',boss:'witch',
+ bossText:'The Witch of Thorns is made of every death you have already had. She smiles with all of your mouths at once.',
+ nodes:[
+  ()=>scene('The Wayside Shrine','A shrine of looped branches. The offerings are keys, and none of them fit any door you know.',[
+   ['Pray',()=>{S.od+=2;scene('Whisper','Something old turns its head and recognises you. (+2 OD)',[['Continue',advance]]);}],
+   ['Take the offering',()=>{S.gold+=30;scene('Coin','Coins, warm as if recently held by someone who needed them.',[['Continue',advance]]);}]]),
+  ()=>fightNode('cultist','A Thorn Cultist blocks the path, stitching a wound that will not close. “The Witch thanks you for the fresh loops,” she says.'),
+  ()=>scene('The Thorn Heart','In the clearing a heart of thorns beats like a second pulse. Nearby: herbs worth a healer’s fortune.',[
+   ['Crush the heart',()=>fight('shade',()=>{S.od+=2;scene('Silence','The heart pops like a fruit. Somewhere far away, a door you have not opened yet clicks shut. (+2 OD)',[['Continue',advance]]);})],
+   ['Take the herbs',()=>{S.pot=Math.min(9,S.pot+2);S.wood+=10;scene('Herbs','Bitter, green, alive. You will need them.',[['Continue',advance]]);}]]),
+  ()=>fightNode('wolf','Another star-wolf, or the same one. In this forest the difference is not measurable.')
+ ]},
+{name:'Chapter IV · The Noble’s Game',boss:'knight',
+ bossText:'Sir Vey removes his gauntlet, revealing a hand that has died a hundred times too. “Again,” he says. “Let us see which of us remembers further.”',
+ nodes:[
+  ()=>scene('The Invitation','A wax seal and a silver bell: the noble house of Aldenfell invites you to the tourney. They know what you are.',[
+   ['Train for it',()=>{S.sp+=1;scene('Training','You learn where your body ends and the loop begins. (+1 stat point)',[['To the tourney',advance]]);}],
+   ['Gather intelligence',()=>{S.od+=2;scene('Whispers','You remember a coat of arms from a death that has not happened yet. (+2 OD)',[['To the tourney',advance]]);}]]),
+  ()=>fightNode('bandit','Men with noble livery and bandit hands block the tourney road.'),
+  ()=>scene('The Wager','The noble offers a bet you cannot lose — only survive. Gold, or stone for your walls.',[
+   ['Take the gold',()=>{S.gold+=60;scene('Coin','Heavy. Warm. Watched.',[['Continue',advance]]);}],
+   ['Take the stone',()=>{S.stone+=30;scene('Stone','Cut to measure, delivered by carts that ask no questions.',[['Continue',advance]]);}]]),
+  ()=>fightNode('cultist','A cultist in the crowd, quietly counting how many times you have breathed.')
+ ]},
+{name:'Chapter V · The Warden of Loops',boss:'warden',
+ bossText:'The Warden of Loops is not a monster. It is the door you keep walking back through.',
+ nodes:[
+  ()=>scene('Echoes','Every death you have taken stands in a row, watching you pass.',[
+   ['Accept them',()=>{S.od+=2;scene('Weight','They settle into your bones like good armour. (+2 OD)',[['Continue',advance]]);}],
+   ['Leave them',()=>{S.sp+=1;scene('Light','You walk on lighter, and learn something new about your own hands. (+1 stat point)',[['Continue',advance]]);}]]),
+  ()=>fightNode('shade','A Loop Shade steps out of your own shadow, wearing the face you wore in the life you left behind.'),
+  ()=>scene('Before the Door','Lyra waits at the gate, holding out two things.',[
+   ['Her charm',()=>{S.pot=Math.min(9,S.pot+2);S.hp=S.maxhp;S.mp=S.maxmp;scene('Charm','“Come back this time,” she says. (Full heal, +2 potions)',[['Face the Warden',advance]]);}],
+   ['The old blade',()=>{S.pts.atk+=1;scene('Blade','It is lighter than it should be, and it remembers every swing. (+1 ATK)',[['Face the Warden',advance]]);}]]),
+  ()=>fightNode('shade','One more echo. It wears your face better than the last one did.')
+ ]}];
+
+function fightNode(id,text){scene('⚔ Ambush',text,[['Fight',()=>fight(id,advance)]]);}
+function lootNode(text,g,t){const p=[];for(const k in g){S[k]+=g[k];p.push(`+${g[k]} ${k==='gold'?'💰':k==='wood'?'🌲':'🪨'}`);}
+ scene(t||'🔍 Search',text+`<br><br>${p.join(' · ')}`,[['Continue',advance]]);}
+function advance(){S.node++;const c=CHAPTERS[S.ch-1];
+ if(S.node>=c.nodes.length)bossNode();else{S.screen='explore';render();}}
+function bossNode(){const c=CHAPTERS[S.ch-1],e=ENEMIES[c.boss];
+ scene('⚠ '+e.n,c.bossText,[['Fight',()=>fight(c.boss,chapterClear)]]);}
+
+function fight(id,after){const e=ENEMIES[id],k=S.ch-1;
+ C={id,name:e.n,hp:Math.round(e.hp*(1+0.22*k)),maxhp:0,
+  atk:Math.round(e.atk*(1+0.18*k)),def:Math.round(e.def*(1+0.15*k)),agi:e.agi+k,
+  xp:Math.round(e.xp*(1+0.25*k)*(1+S.ng*0.2)),gold:Math.round(e.gold*(1+0.2*k)),
+  boss:!!e.boss,log:[],guard:false,turn:0,after,intent:''};
+ C.maxhp=C.hp;S.screen='combat';
+ if(S.skill==='sword'){const d=Math.round(S.atk*0.6);C.hp-=d;C.log.push(`⚡ You strike first for ${d}.`);}
+ setIntent();render();}
+function setIntent(){C.intent=(C.boss&&C.turn%3===2)?'a HEAVY blow':`an attack (~${Math.max(1,C.atk-Math.round(S.def*0.5))}±3)`;}
+function useSkill(){const st=S;let d,h;
+ switch(st.skill){
+  case 'chrono':d=Math.round(st.atk*1.4+rnd(0,4));C.hp-=d;return `⏳ Time-skip strike: ${d}.`;
+  case 'appraise':d=Math.round(st.mag*1.6+rnd(0,4));C.hp-=d;return `🔍 Weakness found — ${d} damage.`;
+  case 'aegis':h=Math.round(st.maxhp*0.25)+st.def*2;st.hp=Math.min(st.maxhp,st.hp+h);return `🛡 Aegis restores ${h} HP.`;
+  case 'burst':d=Math.round(st.mag*2.4+rnd(0,6));C.hp-=d;return `💥 Mana Burst: ${d} damage.`;
+  case 'gluttony':d=Math.round(st.atk*1.2+rnd(0,4));C.hp-=d;st.hp=Math.min(st.maxhp,st.hp+Math.round(d/2));return `🍖 Devour: ${d} damage, +${Math.round(d/2)} HP.`;
+  case 'sword':d=Math.round(st.atk*2.1+rnd(0,5));C.hp-=d;return `⚡ Perfect cut: ${d}.`;}
+ return '…';}
+function act(a){if(!C)return;const st=S;let msg='';
+ switch(a){
+  case 'atk':{const d=Math.max(1,Math.round(st.atk+rnd(0,4)-C.def*0.6));C.hp-=d;msg=`⚔ You hit for ${d}.`;break;}
+  case 'skill':{const c=SKCOST[st.skill]||8;if(st.mp<c){C.log.push(`Not enough MP (need ${c}).`);render();return;}st.mp-=c;msg=useSkill();break;}
+  case 'heal':if(st.mp<12){C.log.push('Not enough MP.');render();return;}st.mp-=12;{const h=Math.round(st.maxhp*0.35)+st.mag;st.hp=Math.min(st.maxhp,st.hp+h);msg=`✨ Heal +${h}.`;}break;
+  case 'fire':if(st.mp<10){C.log.push('Not enough MP.');render();return;}st.mp-=10;{const d=Math.round(st.mag*2.2+rnd(0,5));C.hp-=d;msg=`🔥 Fireball for ${d}.`;}break;
+  case 'guard':C.guard=true;msg='🛡 You brace.';break;
+  case 'pot':if(st.pot<1){C.log.push('No potions left.');render();return;}st.pot--;{const h=Math.round(st.maxhp*0.4);st.hp=Math.min(st.maxhp,st.hp+h);msg=`🧪 Potion +${h}.`;}break;
+  case 'flee':if(Math.random()<0.45+st.agi*0.015){C.log.push('🏃 You slip away into the fog.');C=null;S.screen='explore';render();return;}msg='🏃 You fail to escape!';break;}
+ C.log.push(msg);
+ if(C&&C.hp<=0){win();return;}
+ if(C)enemyTurn();
+ render();}
+function enemyTurn(){const e=C;e.turn++;
+ let d=Math.max(1,Math.round(e.atk-S.def*0.5)+rnd(0,3)),heavy=false;
+ if(e.boss&&e.turn%3===0){d=Math.round(d*1.8);heavy=true;}
+ if(C.guard){d=Math.ceil(d/2);C.guard=false;}
+ if(S.skill==='chrono'&&Math.random()<0.15){C.log.push('⏳ You slip aside as time folds.');d=0;}
+ if(d>0){S.hp-=d;C.log.push(`${heavy?'💢 ':''}${e.name} hits you for ${d}.`);}
+ else C.log.push(`${e.name} strikes at nothing.`);
+ setIntent();
+ if(S.hp<=0){S.hp=0;death();}}
+function win(){const e=C,lines=C.log.slice(),app=S.skill==='appraise'?1.25:1;
+ const ups=gainXp(e.xp*app),g=Math.round(e.gold*app);
+ S.gold+=g;S.pot=Math.min(9,S.pot+(e.boss?2:(Math.random()<0.3?1:0)));
+ const after=e.after;C=null;
+ note('🏆 Victory',`${lines.join('<br>')}<br><br><b>${e.name} falls.</b><br>+${Math.round(e.xp*app)} XP · +${g} gold${ups?`<br>⭐ Level up! Now Lv ${S.lv} (+${3+S.perks.sp} stat points — see Status).`:''}`,[['Continue',after]]);}
+function death(){S.deaths++;S.od+=1+S.perks.od;C=null;S.screen='death';render();}
+function chapterClear(){const eb=estateBonus(),g=40*S.ch,w=10*S.ch,s=10*S.ch;
+ S.gold+=g+eb.gold*S.ch;S.wood+=w;S.stone+=s;S.od+=eb.od;S.pot=Math.min(9,S.pot+2*S.perks.pot);
+ if(S.ch>=5)return ending();
+ const done=S.ch;S.ch++;S.node=0;S.hp=S.maxhp;S.mp=S.maxmp;
+ scene(`Chapter ${done} clear`,'The loop closes like a book.<br><br>💰 +'+g+' gold · 🌲 +'+w+' wood · 🪨 +'+s+' stone · 🌀 +'+eb.od+' OD · Farm income +'+eb.gold*done+' gold<br><br>Chapter '+S.ch+' begins. Lyra is waiting at the gate.',
+  [['🏡 Rest & rebuild',()=>{S.screen='estate';render();}],['➡ Explore the new chapter',()=>{S.screen='explore';render();}]]);}
+function ending(){S.ng++;
+ scene('The Loop Breaks','The Warden of Loops kneels, and for one heartbeat the two moons line up.<br><br>You remember every death. You remember every choice. And you remember that you are <b>'+esc(S.name)+'</b> — not a loop, not a mistake, not a warning.<br><br>Lyra is laughing at the gate. It is morning. It is the first morning.',
+  [['🌱 New Game+ (keep everything, +15% stats, +5 OD)',()=>{S.od+=5;S.ch=1;S.node=0;S.hp=S.maxhp;S.mp=S.maxmp;S.screen='explore';render();}],
+   ['📜 Title screen',()=>{S.screen='title';render();}]]);}
+
+function scrTitle(){$('#main').innerHTML='<h1>Return by<br>Death</h1><p class=sm>an isekai loop RPG · one file · saves in this browser</p>';
+ setChoices([['▶ New Game',()=>{S=fresh();S.screen='intro';render();}],
+  ['↻ Continue',()=>load()],
+  ['❓ How to play',()=>note('How to play','Explore → fight → level up → spend points in Status → rebuild the estate → beat the chapter boss.<br><br>Death triggers <b>Return by Death</b>: the chapter restarts, you keep level, estate, gold and OD, and can spend OD on permanent perks.<br><br>Combat: Attack / Skill / Heal (Lv3) / Fireball (Lv5) / Guard / Potion / Flee.',[['OK',()=>{S.screen='title';render();}]])]]);}
+function scrIntro(){$('#main').innerHTML='<h2>Prologue</h2><p class=story>You died on a platform you had never seen before, and woke under two moons.<br><br>Someone in this world knows why you come back. You will find them — or die trying, again and again.</p>';
+ setChoices([['Wake up',()=>{S.screen='create';render();}]]);}
+function scrCreate(){const cards=SKILLS.map(s=>`<button class="card ${S.skill===s.id?'on':''}" data-skill="${s.id}"><b>${s.name}</b><span>${s.desc}</span></button>`).join('');
+ $('#main').innerHTML=`<h2>Choose your Cheat Skill</h2><input id="nm" placeholder="Name (it survives every loop)" value="${esc(S.name||'')}"><div class=cards>${cards}</div>`;
+ document.querySelectorAll('[data-skill]').forEach(b=>b.onclick=()=>{S.skill=b.dataset.skill;render();});
+ setChoices([['✦ Begin the Loop',()=>{const v=$('#nm').value.trim();S.name=v||'Nameless';S.hp=S.maxhp;S.mp=S.maxmp;
+  scene('The Gate','A door of standing water opens in the forest. It has your face on the other side.',[['Step through',advance]]);}]]);}
+function scrExplore(){const c=CHAPTERS[S.ch-1],pct=Math.round(S.node/c.nodes.length*100);
+ $('#main').innerHTML=`<h2>${c.name}</h2><p class=sm>Progress ${S.node}/${c.nodes.length} nodes · Boss: ${ENEMIES[c.boss].n}</p><div class=bar><i style="width:${pct}%"></i></div><p class=story>Aldenfell stirs. The loop holds its breath.</p>`;
+ setChoices([['⚔ Press on',()=>c.nodes[S.node]()],
+  ['🍖 Rest here (10 gold, full heal)',()=>{if(S.gold<10){warn('Too poor','You need 10 gold to rest.');return;}S.gold-=10;S.hp=S.maxhp;S.mp=S.maxmp;render();}]]);}
+function scrStatus(){const sk=SKILLS.find(s=>s.id===S.skill),eb=estateBonus();
+ $('#main').innerHTML=`<h2>${esc(S.name)} — Lv ${S.lv}</h2>
+ <div class=grid><div>❤ HP ${S.hp}/${S.maxhp}</div><div>🔷 MP ${S.mp}/${S.maxmp}</div>
+ <div>⚔ ATK ${S.atk}</div><div>🛡 DEF ${S.def}</div><div>💨 AGI ${S.agi}</div><div>✨ MAG ${S.mag}</div></div>
+ <p class=sm>Cheat skill: <b>${sk?sk.name:'—'}</b> · XP ${S.xp}/${xpNext()} · 🌀OD ${S.od} · 💰${S.gold} 🌲${S.wood} 🪨${S.stone} 🧪${S.pot}<br>Deaths ${S.deaths} · Loops ${S.ng} · Chapter ${S.ch}</p>
+ <p class=sm>Stat points: <b>${S.sp}</b></p>
+ <div class=row>${['hp','atk','def','agi','mag'].map(k=>`<button data-stat="${k}" ${S.sp<1?'disabled':''}>+ ${k.toUpperCase()}</button>`).join('')}</div>
+ <h3>Loop Perks (spend OD, keep forever)</h3>
+ ${PERKS.map(p=>`<div class=row><span style="flex:3">${p.name} (${S.perks[p.id]}/${p.max}) — ${p.desc}</span><button data-perk="${p.id}" ${(S.perks[p.id]>=p.max||S.od<p.cost)?'disabled':''}>Buy · ${p.cost} OD</button></div>`).join('')}
+ <p class=sm>Estate income: +${eb.gold} gold/chapter</p>`;}
+function addStat(k){if(S.sp>0){S.pts[k]++;S.sp--;calc();render();}}
+function buyPerk(id){const p=PERKS.find(x=>x.id===id);if(S.perks[id]>=p.max||S.od<p.cost)return;S.od-=p.cost;S.perks[id]++;render();}
+function scrEstate(){const eb=estateBonus();
+ $('#main').innerHTML=`<h2>🏡 Aldenfell Estate</h2>
+ <p class=sm>💰 ${S.gold} · 🌲 ${S.wood} · 🪨 ${S.stone} · income +${eb.gold} gold/chapter</p>
+ ${BUILDINGS.map(b=>{const n=S.build[b.id]||0;return `<div class=card style="margin:8px 0;padding:10px;border:1px solid #2a3355;border-radius:10px"><b>${b.name}</b> ×${n} <span class=sm>${b.desc}</span><br><button data-buy="${b.id}" ${canAfford(b.cost)?'':'disabled'}>Build · ${costText(b.cost)}</button></div>`;}).join('')}
+ <div class=row><button data-act="rest">🍖 Rest (10 gold, full heal)</button><button data-act="prayer">🙏 Shrine prayer (30 gold, +1 OD)</button><button data-act="potion">🧪 Buy potion (15 gold)</button></div>`;}
+function canAfford(c){return Object.keys(c).every(k=>S[k]>=c[k]);}
+function pay(c){Object.keys(c).forEach(k=>S[k]-=c[k]);}
+function costText(c){return Object.entries(c).map(([k,v])=>v+({gold:'💰',wood:'🌲',stone:'🪨'}[k])).join(' ');}
+function buy(id){const b=BUILDINGS.find(x=>x.id===id);if(!canAfford(b.cost))return;pay(b.cost);S.build[id]=(S.build[id]||0)+1;render();}
+function scrCombat(){if(!C){S.screen='explore';render();return;}
+ const know=S.skill==='chrono'||S.skill==='appraise';
+ const bar=(v,m,c)=>`<div class=bar><i style="width:${Math.max(0,Math.min(100,v/m*100))}%;background:${c}"></i></div>`;
+ let h=`<h2>${C.name}${C.boss?' 👑':''}</h2>`+bar(C.hp,C.maxhp,'#e05252')+`<div class=sm>${Math.max(0,C.hp)} / ${C.maxhp}</div>`;
+ if(S.skill==='appraise')h+=`<div class=sm>ATK ${C.atk} · DEF ${C.def} · AGI ${C.agi} · XP ${C.xp}</div>`;
+ else if(know)h+=`<div class=sm>👁 Intent: ${C.intent}</div>`;
+ h+=`<hr><div>❤ ${S.hp}/${S.maxhp}</div>`+bar(S.hp,S.maxhp,'#4caf7d')+`<div>🔷 ${S.mp}/${S.maxmp}</div>`+bar(S.mp,S.maxmp,'#4a7fd4');
+ h+=`<div class=sm>ATK ${S.atk} · DEF ${S.def} · AGI ${S.agi} · MAG ${S.mag} · 🧪 ${S.pot}</div><div class=log>${C.log.slice(-6).join('<br>')}</div>`;
+ $('#main').innerHTML=h;
+ const sk=SKCOST[S.skill]||8;
+ const o=[['⚔ Attack',()=>act('atk')],['★ Skill ('+sk+' MP)',()=>act('skill')]];
+ if(S.lv>=3)o.push(['✨ Heal (12 MP)',()=>act('heal')]);
+ if(S.lv>=5)o.push(['🔥 Fireball (10 MP)',()=>act('fire')]);
+ o.push(['🛡 Guard',()=>act('guard')],['🧪 Potion ('+S.pot+')',()=>act('pot')],['🏃 Flee',()=>act('flee')]);
+ setChoices(o);}
+function scrDeath(){$('#main').innerHTML=`<h2>💀 You died</h2>
+ <p class=story>The world folds. It has done this before, and it will do it again.<br><br>Deaths: <b>${S.deaths}</b> · OD gained: <b>${1+S.perks.od}</b> · Total OD: <b>${S.od}</b><br><br>Your level, skills, estate and gold survive. The chapter restarts.</p>`;
+ setChoices([['↩ Return by Death (restart chapter)',()=>{S.node=0;S.hp=S.maxhp;S.mp=S.maxmp;S.screen='explore';render();}],
+  ['📜 Spend OD on perks',()=>{S.screen='status';render();}]]);}
+
+const SCREENS={title:scrTitle,intro:scrIntro,create:scrCreate,explore:scrExplore,status:scrStatus,estate:scrEstate,combat:scrCombat,death:scrDeath,
+ scene(){const s=S._scene||{t:'…',b:'',o:[['OK',()=>{S.screen='explore';render();}]]};$('#main').innerHTML=`<h2>${s.t}</h2><p class=story>${s.b}</p>`;setChoices(s.o);},
+ note(){const s=S._note||{t:'…',b:'',o:[['OK',()=>{S.screen='explore';render();}]]};$('#main').innerHTML=`<h2>${s.t}</h2><p class=story>${s.b}</p>`;setChoices(s.o);}};
+
+function hudHtml(){return `💠 <b>${esc(S.name)||'—'}</b> Lv${S.lv} · ❤${S.hp}/${S.maxhp} · 🔷${S.mp}/${S.maxmp} · XP ${S.xp}/${xpNext()} · 💰${S.gold} 🌲${S.wood} 🪨${S.stone} 🧪${S.pot} · 🌀OD ${S.od} · Ch${S.ch}`;}
+function render(){calc();$('#hud').innerHTML=hudHtml();(SCREENS[S.screen]||SCREENS.title)();
+ $('#nav').innerHTML=['combat','scene','note','death'].includes(S.screen)?'':
+  '<button data-nav="explore">🧭 Explore</button><button data-nav="status">📜 Status</button><button data-nav="estate">🏡 Estate</button>';
+ save();}
+
+document.addEventListener('click',e=>{
+ const b=e.target.closest('button');if(!b)return;
+ if(b.hasAttribute('data-skill')){S.skill=b.dataset.skill;render();return;}
+ if(b.hasAttribute('data-i')){const f=S._ch&&S._ch[+b.dataset.i];if(f)f();return;}
+ if(b.dataset.nav){S.screen=b.dataset.nav;render();return;}
+ if(b.dataset.stat){addStat(b.dataset.stat);return;}
+ if(b.dataset.perk){buyPerk(b.dataset.perk);return;}
+ if(b.dataset.buy){buy(b.dataset.buy);return;}
+ const a=b.dataset.act;if(!a)return;
+ if(a==='rest'){if(S.gold<10){warn('Too poor','You need 10 gold to rest.');return;}S.gold-=10;S.hp=S.maxhp;S.mp=S.maxmp;render();}
+ if(a==='prayer'){if(S.gold<30){warn('Too poor','The shrine wants 30 gold.');return;}S.gold-=30;S.od++;render();}
+ if(a==='potion'){if(S.gold<15){warn('Too poor','A potion costs 15 gold.');return;}S.gold-=15;S.pot=Math.min(9,S.pot+1);render();}
+ if(a==='new'){S=fresh();S.screen='intro';render();}
+ if(a==='cont'){load();}
+ if(a==='save'){save();note('Saved','Your loop is written to this browser.',[['OK',()=>{S.screen=S._from||'explore';render();}]]);}
+ if(a==='load'){if(!load())note('No save','Nothing saved in this browser yet.',[['OK',()=>{S.screen=S._from||'explore';render();}]]);}
+ if(a==='wipe'){if(confirm('Erase this save?')){localStorage.removeItem(KEY);S=fresh();S.screen='title';render();}}
+ if(a==='how'){note('How to play','Explore → fight → level up → spend points in Status → rebuild the estate → beat the chapter boss.<br><br>Death triggers <b>Return by Death</b>: chapter restarts, you keep level/estate/gold/OD, and OD buys permanent perks.<br><br>Combat: Attack / Skill / Heal (Lv3) / Fireball (Lv5) / Guard / Potion / Flee.',[['OK',()=>{S.screen=S._from||'explore';render();}]]);}
+});
+
+S=fresh();render();
+</script>
+</body>
+</html>
